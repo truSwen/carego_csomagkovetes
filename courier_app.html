@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carego Futár App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Kisebb animáció a státusz üzenetekhez */
+        .status-message {
+            transition: all 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-md p-6 bg-white rounded-xl shadow-lg">
+        
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">Carego Futár</h1>
+            <p class="text-gray-500">Helyzetmegosztó felület</p>
+        </div>
+
+        <!-- Beviteli Mezők -->
+        <div class="space-y-4">
+            <div>
+                <label for="trackingCode" class="block text-sm font-medium text-gray-700">Követési kód</label>
+                <input type="text" id="trackingCode" value="TEST123" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+            </div>
+        </div>
+
+        <!-- Gombok -->
+        <div class="mt-6">
+            <button id="startButton" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                Nyomkövetés Indítása
+            </button>
+            <button id="stopButton" class="hidden w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 mt-2">
+                Nyomkövetés Leállítása
+            </button>
+        </div>
+
+        <!-- Státusz Kijelző -->
+        <div id="status" class="mt-6 text-center text-sm text-gray-600 p-3 bg-gray-50 rounded-lg status-message">
+            A nyomkövetés inaktív. Add meg a kódot és indítsd el!
+        </div>
+    </div>
+
+    <script>
+        // --- Változók ---
+        const trackingCodeInput = document.getElementById('trackingCode');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusDiv = document.getElementById('status');
+        
+        // Ez a változó tárolja a setInterval azonosítóját, hogy le tudjuk állítani
+        let trackingIntervalId = null; 
+        const UPDATE_INTERVAL = 900000; // 15 perc
+
+        // --- Eseménykezelők ---
+        startButton.addEventListener('click', startTracking);
+        stopButton.addEventListener('click', stopTracking);
+
+        // --- Fő Funkciók ---
+
+        /**
+         * Elindítja a nyomkövetési folyamatot.
+         */
+        function startTracking() {
+            const trackingCode = trackingCodeInput.value.trim();
+            if (!trackingCode) {
+                updateStatus('Hiba: A követési kód nem lehet üres!', 'error');
+                return;
+            }
+
+            // Ellenőrizzük, hogy a böngésző támogatja-e a helymeghatározást
+            if (!navigator.geolocation) {
+                updateStatus('Hiba: A böngésződ nem támogatja a helymeghatározást.', 'error');
+                return;
+            }
+            
+            updateStatus('GPS engedély kérése...', 'loading');
+            
+            // Engedélyt kérünk a GPS használatához.
+            // A getCurrentPosition egyszeri lekérdezést végez, ami ideális az első pozíció elküldéséhez.
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    // Sikeres pozíció lekérdezés esetén
+                    updateStatus(`Nyomkövetés aktív: ${trackingCode}`, 'success');
+                    toggleControls(true); // Gombok és mező állapotának váltása
+
+                    // Elküldjük az első pozíciót azonnal
+                    sendLocation(trackingCode, position.coords);
+
+                    // Elindítjuk az ismétlődő küldést
+                    trackingIntervalId = setInterval(() => {
+                        // Újra és újra lekérjük és elküldjük a pozíciót
+                        navigator.geolocation.getCurrentPosition(
+                            (pos) => sendLocation(trackingCode, pos.coords),
+                            handleLocationError // Hibakezelés, ha időközben hiba lép fel
+                        );
+                    }, UPDATE_INTERVAL);
+                },
+                handleLocationError // Hibakezelés, ha a felhasználó nem ad engedélyt
+            );
+        }
+
+        /**
+         * Leállítja a nyomkövetési folyamatot.
+         */
+        function stopTracking() {
+            if (trackingIntervalId) {
+                clearInterval(trackingIntervalId); // Leállítjuk az időzítőt
+                trackingIntervalId = null;
+                updateStatus('A nyomkövetés leállítva.', 'info');
+                toggleControls(false); // Visszaállítjuk a gombokat
+            }
+        }
+
+        /**
+         * Elküldi a helyzetadatokat a szerver API-nak.
+         * @param {string} code - A csomag követési kódja.
+         * @param {GeolocationCoordinates} coords - A koordináta objektum.
+         */
+        async function sendLocation(code, coords) {
+            const data = {
+                tracking_code: code,
+                latitude: coords.latitude,
+                longitude: coords.longitude
+            };
+
+            try {
+                // A fetch() egy modern módja az API hívásoknak
+                const response = await fetch('/api/update_location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+
+                if (!response.ok) {
+                    // Ha a szerver hibát ad vissza (pl. 400, 404, 500)
+                    throw new Error(result.message || 'Ismeretlen szerverhiba');
+                }
+
+                // Sikeres küldés esetén frissítjük a státuszt
+                const now = new Date();
+                const timeString = now.toLocaleTimeString('hu-HU');
+                updateStatus(`Pozíció elküldve (${timeString})`, 'success', false);
+
+            } catch (error) {
+                console.error('Hiba a pozíció küldésekor:', error);
+                updateStatus(`Küldési hiba: ${error.message}`, 'error', false);
+                // Hiba esetén le is állíthatnánk a követést, de most hagyjuk futni, hátha a következő küldés sikeres lesz.
+            }
+        }
+
+        // --- Segédfüggvények ---
+
+        /**
+         * Frissíti a státusz kijelzőt egy üzenettel és színnel.
+         * @param {string} message - A megjelenítendő üzenet.
+         * @param {'info'|'success'|'error'|'loading'} type - Az üzenet típusa a színezéshez.
+         * @param {boolean} clearAfter - Ha igaz, egy idő után visszavált 'info' típusra.
+         */
+        function updateStatus(message, type, clearAfter = true) {
+            statusDiv.textContent = message;
+            statusDiv.className = 'mt-6 text-center text-sm p-3 rounded-lg status-message '; // Alap stílusok
+
+            switch (type) {
+                case 'success':
+                    statusDiv.classList.add('bg-green-100', 'text-green-800');
+                    break;
+                case 'error':
+                    statusDiv.classList.add('bg-red-100', 'text-red-800');
+                    break;
+                case 'loading':
+                     statusDiv.classList.add('bg-blue-100', 'text-blue-800');
+                    break;
+                case 'info':
+                default:
+                    statusDiv.classList.add('bg-gray-100', 'text-gray-600');
+                    break;
+            }
+        }
+
+        /**
+         * Kezeli a helymeghatározás során fellépő hibákat.
+         * @param {GeolocationPositionError} error - A hiba objektum.
+         */
+        function handleLocationError(error) {
+            let message = 'Ismeretlen GPS hiba.';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    message = "Nem adtál engedélyt a helyzeted megosztásához.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message = "A helyzeted jelenleg nem elérhető.";
+                    break;
+                case error.TIMEOUT:
+                    message = "A helyzet lekérdezése időtúllépés miatt megszakadt.";
+                    break;
+            }
+            updateStatus(`Hiba: ${message}`, 'error');
+            stopTracking(); // Hiba esetén leállítjuk a folyamatot
+        }
+
+        /**
+         * Átkapcsolja a vezérlőelemek (gombok, beviteli mező) állapotát.
+         * @param {boolean} isTracking - Igaz, ha a követés aktív.
+         */
+        function toggleControls(isTracking) {
+            trackingCodeInput.disabled = isTracking;
+            startButton.classList.toggle('hidden', isTracking);
+            stopButton.classList.toggle('hidden', !isTracking);
+        }
+    </script>
+</body>
+</html>

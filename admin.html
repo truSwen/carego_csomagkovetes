@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carego Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Inter', sans-serif; } </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-md">
+        <!-- Belépési Képernyő -->
+        <div id="login-view" class="p-8 bg-white rounded-xl shadow-lg">
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">Carego Admin Belépés</h1>
+            <div class="space-y-4">
+                <div>
+                    <label for="password" class="sr-only">Jelszó</label>
+                    <input type="password" id="password" class="block w-full px-4 py-3 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="Jelszó">
+                </div>
+                <button id="login-button" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Belépés</button>
+                <p id="login-error" class="text-red-500 text-sm text-center hidden"></p>
+            </div>
+        </div>
+
+        <!-- Admin Felület (rejtett) -->
+        <div id="admin-panel" class="hidden p-8 bg-white rounded-xl shadow-lg">
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">Új Csomag Rögzítése</h1>
+            <form id="new-package-form" class="space-y-4">
+                <div>
+                    <label for="recipient_name" class="block text-sm font-medium text-gray-700">Címzett neve</label>
+                    <input type="text" id="recipient_name" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div>
+                    <label for="address" class="block text-sm font-medium text-gray-700">Cím</label>
+                    <input type="text" id="address" required class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+                <div>
+                    <label for="notes" class="block text-sm font-medium text-gray-700">Megjegyzés (opcionális)</label>
+                    <textarea id="notes" rows="3" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+                </div>
+                <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Csomag Rögzítése</button>
+            </form>
+            <div id="response-message" class="mt-4 text-center text-sm p-3 rounded-lg hidden"></div>
+        </div>
+    </div>
+
+<script>
+    const loginView = document.getElementById('login-view');
+    const adminPanel = document.getElementById('admin-panel');
+    const loginButton = document.getElementById('login-button');
+    const passwordInput = document.getElementById('password');
+    const loginError = document.getElementById('login-error');
+    const newPackageForm = document.getElementById('new-package-form');
+    const responseMessage = document.getElementById('response-message');
+    let adminPassword = '';
+
+    loginButton.addEventListener('click', () => {
+        adminPassword = passwordInput.value;
+        if (!adminPassword) {
+            loginError.textContent = 'A jelszó megadása kötelező.';
+            loginError.classList.remove('hidden');
+            return;
+        }
+        loginError.classList.add('hidden');
+        loginView.classList.add('hidden');
+        adminPanel.classList.remove('hidden');
+    });
+
+    newPackageForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const recipient_name = document.getElementById('recipient_name').value;
+        const address = document.getElementById('address').value;
+        const notes = document.getElementById('notes').value;
+
+        responseMessage.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/create_order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    password: adminPassword,
+                    recipient_name,
+                    address,
+                    notes
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                // Ha a jelszó rossz vagy más hiba van
+                if (response.status === 401) {
+                    showLoginError('Hibás jelszó!');
+                }
+                throw new Error(data.message || 'Ismeretlen hiba');
+            }
+            
+            // Sikeres rögzítés
+            showMessage(`Sikeresen rögzítve! Az új követési kód: <strong>${data.tracking_code}</strong>`, 'success');
+            newPackageForm.reset();
+
+        } catch (error) {
+            showMessage(`Hiba történt: ${error.message}`, 'error');
+        }
+    });
+
+    function showMessage(message, type) {
+        responseMessage.innerHTML = message;
+        responseMessage.className = `mt-4 text-center text-sm p-3 rounded-lg ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+        responseMessage.classList.remove('hidden');
+    }
+
+    function showLoginError(message) {
+        loginView.classList.remove('hidden');
+        adminPanel.classList.add('hidden');
+        loginError.textContent = message;
+        loginError.classList.remove('hidden');
+        passwordInput.value = '';
+    }
+</script>
+</body>
+</html>
+

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carego Csomagkövetés - V2</title>
+    <!-- Tailwind CSS a modern kinézethez -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS a térképhez -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <style>
+        /* Egyedi stílus a térkép magasságához és a betöltés animációhoz */
+        #map { height: 400px; border-radius: 0.5rem; }
+        .spinner {
+            border-top-color: #3498db;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans">
+
+    <div class="bg-white p-6 sm:p-8 rounded-xl shadow-lg w-full max-w-2xl m-4">
+        
+        <!-- Fejléc -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-800">Carego Csomagkövetés</h1>
+            <p class="text-gray-500 mt-2">Adja meg a követési kódot a csomag aktuális helyzetének megtekintéséhez.</p>
+        </div>
+
+        <!-- Kereső űrlap -->
+        <div class="flex flex-col sm:flex-row gap-2 mb-6">
+            <input type="text" id="tracking-code" class="flex-grow p-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 transition-colors" placeholder="pl. CAREGO-XY12ZA">
+            <button onclick="trackPackage()" class="bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                Csomag Követése
+            </button>
+        </div>
+
+        <!-- Eredményeket megjelenítő terület -->
+        <div id="results" class="space-y-6">
+            <!-- Betöltés jelző -->
+            <div id="loader" class="hidden items-center justify-center p-4">
+                <div class="spinner w-8 h-8 border-4 border-gray-200 rounded-full"></div>
+                <p class="ml-3 text-gray-600">Keresés...</p>
+            </div>
+            <!-- Hibaüzenet -->
+            <div id="error-message" class="hidden bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg"></div>
+            <!-- Sikeres eredmény -->
+            <div id="package-details" class="hidden space-y-4">
+                <div class="bg-gray-50 p-4 rounded-lg border">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-2">Csomag Adatok</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-gray-600">
+                        <p><strong>Kód:</strong> <span id="details-code"></span></p>
+                        <p><strong>Státusz:</strong> <span id="details-status" class="font-semibold text-green-600"></span></p>
+                        <p><strong>Címzett:</strong> <span id="details-recipient"></span></p>
+                        <p><strong>Cím:</strong> <span id="details-address"></span></p>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Utolsó ismert helyzet</h3>
+                    <div id="map"></div>
+                    <p class="text-sm text-gray-500 text-center mt-2">Frissítve: <span id="details-timestamp">N/A</span></p>
+                </div>
+            </div>
+             <!-- Üzenet, ha még nincs helyzetadat -->
+            <div id="no-location-message" class="hidden bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg">
+                <p class="font-bold">A csomag úton van!</p>
+                <p>A futár még nem küldött helyzetadatot. Kérjük, próbálja meg később.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Leaflet JS a térképhez -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        // Változók inicializálása
+        const trackingCodeInput = document.getElementById('tracking-code');
+        const resultsDiv = document.getElementById('results');
+        const loader = document.getElementById('loader');
+        const errorMessage = document.getElementById('error-message');
+        const packageDetails = document.getElementById('package-details');
+        const noLocationMessage = document.getElementById('no-location-message');
+        
+        let map; // A térkép objektum, hogy később is elérjük
+
+        // Enter lenyomására is működjön a keresés
+        trackingCodeInput.addEventListener('keyup', function(event) {
+            if (event.key === 'Enter') {
+                trackPackage();
+            }
+        });
+
+        async function trackPackage() {
+            const trackingCode = trackingCodeInput.value.trim().toUpperCase();
+            if (!trackingCode) {
+                showError('Kérjük, adjon meg egy követési kódot.');
+                return;
+            }
+
+            // UI előkészítése a kereséshez
+            resetUI();
+            loader.style.display = 'flex';
+
+            try {
+                const response = await fetch(`/api/track/${trackingCode}`);
+                const data = await response.json();
+
+                loader.style.display = 'none';
+
+                if (response.ok) {
+                    displayPackageDetails(data);
+                } else {
+                    showError(data.message || 'Ismeretlen hiba történt.');
+                }
+            } catch (error) {
+                loader.style.display = 'none';
+                showError('Szerver hiba. Kérjük, próbálja meg később.');
+            }
+        }
+
+        function displayPackageDetails(data) {
+            packageDetails.style.display = 'block';
+            
+            // Csomag adatok kitöltése
+            document.getElementById('details-code').innerText = data.tracking_code;
+            document.getElementById('details-status').innerText = data.status;
+            document.getElementById('details-recipient').innerText = data.recipient_name || 'N/A';
+            document.getElementById('details-address').innerText = data.address || 'N/A';
+
+            if (data.last_known_location) {
+                document.getElementById('map').style.display = 'block';
+                noLocationMessage.style.display = 'none';
+
+                const lat = data.last_known_location.latitude;
+                const lon = data.last_known_location.longitude;
+                
+                // Időbélyeg formázása
+                const timestamp = new Date(data.last_known_location.timestamp);
+                document.getElementById('details-timestamp').innerText = timestamp.toLocaleString('hu-HU');
+                
+                // Térkép inicializálása vagy frissítése
+                if (map) {
+                    map.remove(); // Előző térkép eltávolítása
+                }
+                map = L.map('map').setView([lat, lon], 15);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+                L.marker([lat, lon]).addTo(map)
+                    .bindPopup(`<b>${data.tracking_code}</b><br>Utolsó helyzet.`).openPopup();
+
+            } else {
+                // Ha a csomag létezik, de még nincs helyzetadat
+                document.getElementById('map').style.display = 'none';
+                document.getElementById('details-timestamp').innerText = 'Még nincs adat';
+                noLocationMessage.style.display = 'block';
+            }
+        }
+
+        function showError(message) {
+            errorMessage.innerText = message;
+            errorMessage.style.display = 'block';
+        }
+
+        function resetUI() {
+            loader.style.display = 'none';
+            errorMessage.style.display = 'none';
+            packageDetails.style.display = 'none';
+            noLocationMessage.style.display = 'none';
+        }
+
+    </script>
+</body>
+</html>
