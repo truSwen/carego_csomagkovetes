@@ -1,29 +1,73 @@
 import sys
-# --- DIAGNOSZTIKAI POLOSKA ---
-print("--- SERVER.PY (v.RENDER_READY) BETOLTESE MEGKEZDODOTT ---", file=sys.stderr)
-
-from flask import Flask, request, jsonify, g, send_from_directory
 import sqlite3
 import os
 import random
 import string
+from flask import Flask, request, jsonify, g, send_from_directory
 
-# Az abszolút útvonalat a Render környezetéből vesszük
-# Ha ott nem elérhető, visszavált a helyi fejlesztői útvonalra
-# Ezzel a kód univerzálisabb lesz
+# --- Konfiguráció ---
+# Az útvonalakat a Render környezetéhez igazítjuk
 APP_ROOT = os.environ.get('RENDER_PROJECT_ROOT', os.path.dirname(os.path.abspath(__file__)))
-DATABASE = os.path.join(APP_ROOT, 'tracker.db')
-
-app = Flask(__name__)
-
+DATABASE_PATH = os.path.join(APP_ROOT, 'tracker.db')
 ADMIN_PASSWORD = "carego_secret_password" 
 
+def init_database():
+    """Létrehozza az adatbázis fájlt és a táblákat, ha még nem léteznek."""
+    # Csak akkor fut le, ha a tracker.db FÁJL nem létezik.
+    if os.path.exists(DATABASE_PATH):
+        print("--- Adatbázis már létezik, inicializálás kihagyva. ---", file=sys.stderr)
+        return
+
+    print("--- Adatbázis nem található, INICIALIZÁLÁS MEGKEZDVE... ---", file=sys.stderr)
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+        # Orders tábla létrehozása
+        cursor.execute('''
+            CREATE TABLE Orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracking_code TEXT UNIQUE NOT NULL,
+                status TEXT NOT NULL,
+                recipient_name TEXT,
+                address TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # LocationUpdates tábla létrehozása
+        cursor.execute('''
+            CREATE TABLE LocationUpdates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_tracking_code TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (order_tracking_code) REFERENCES Orders (tracking_code)
+            )
+        ''')
+        # Tesztadat beszúrása
+        cursor.execute(
+            "INSERT INTO Orders (tracking_code, recipient_name, address, notes, status) VALUES (?, ?, ?, ?, ?)",
+            ('TEST123', 'Teszt Elek', '1234 Tesztváros, Próba utca 1.', 'Ez egy alapértelmezett tesztcsomag.', 'felvételre vár')
+        )
+        conn.commit()
+        conn.close()
+        print("--- Adatbázis sikeresen inicializálva és feltöltve tesztadattal. ---", file=sys.stderr)
+    except Exception as e:
+        print(f"!!! HIBA AZ ADATBÁZIS INICIALIZÁLÁSA SORÁN: {e}", file=sys.stderr)
+
+
+# --- Flask Alkalmazás ---
+app = Flask(__name__)
+
+# Az adatbázis inicializálása az alkalmazás indításakor
+init_database()
+
+# --- Adatbázis Kezelés ---
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
-        # FONTOS: Az adatbázis elérési útját is az APP_ROOT-hoz igazítjuk
-        db_path = os.path.join(APP_ROOT, 'tracker.db')
-        db = g._database = sqlite3.connect(db_path)
+        db = g._database = sqlite3.connect(DATABASE_PATH)
         db.row_factory = sqlite3.Row
     return db
 
@@ -33,10 +77,9 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
-# A FŐOLDAL MOSTANTÓL A V2-ES DIZÁJNT TÖLTI BE
+# --- Weboldalak Kiszolgálása ---
 @app.route('/')
 def serve_customer_app():
-    # Fontos: A fájl nevének egyeznie kell azzal, amit feltöltesz
     return send_from_directory(APP_ROOT, 'csomagkovetes_v2.html')
 
 @app.route('/courier')
@@ -47,8 +90,17 @@ def serve_courier_app():
 def serve_admin_app():
     return send_from_directory(APP_ROOT, 'admin.html')
 
+# --- API Végpontok ---
 def generate_unique_tracking_code(db):
     while True:
+        #... (A kód többi része változatlan)
+# ... A többi API végpont (create_order, update_location, track_package) szintén változatlan ...
+# ...
+# A teljes, korábbi funkciók itt következnek, változtatás nélkül.
+# ...
+# A rövidség kedvéért a többi végpontot nem másolom be újra, de azoknak itt kell lenniük.
+# Az alábbiakban a hiányzó részeket pótoltam:
+
         part1 = ''.join(random.choices(string.ascii_uppercase, k=2))
         part2 = ''.join(random.choices(string.digits, k=2))
         part3 = ''.join(random.choices(string.ascii_uppercase, k=2))
@@ -104,18 +156,10 @@ def track_package(tracking_code):
             return jsonify({"status": "error", "message": "A követési kód nem található"}), 404
         last_location = db.execute('SELECT latitude, longitude, timestamp FROM LocationUpdates WHERE order_tracking_code = ? ORDER BY timestamp DESC LIMIT 1',(tracking_code,)).fetchone()
         
-        # Az order objektumot szótárrá alakítjuk a könnyebb kezelhetőségért
         response_data = dict(order)
-        # A last_location objektumot is, ha létezik
         response_data["last_known_location"] = dict(last_location) if last_location else None
         
         return jsonify(response_data), 200
     except sqlite3.Error as e:
         return jsonify({"status": "error", "message": f"Adatbázis hiba: {e}"}), 500
-
-# Ezt a részt a Render nem használja, de a helyi fejlesztéshez meghagyjuk
-if __name__ == '__main__':
-    # Figyelem: A Render a 'gunicorn server:app' parancsot használja, nem ezt!
-    print("!!! FIGYELEM: Helyi fejlesztői szerver indult. Élesítéshez Gunicorn szükséges. !!!")
-    app.run(host='0.0.0.0', port=5000, debug=True)
 
